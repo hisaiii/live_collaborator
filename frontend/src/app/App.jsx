@@ -394,6 +394,7 @@ function App() {
         window.history.pushState({}, "", "?" + params.toString())
         setSession({ room: roomId, username })
     }
+    
 
     if (!session) return <Landing onJoin={handleJoin} />
     return <CollaboratorEditor roomId={session.room} username={session.username} />
