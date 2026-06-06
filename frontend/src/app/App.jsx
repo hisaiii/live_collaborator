@@ -138,10 +138,10 @@ function CollaboratorEditor({ roomId, username }) {
 
     const userColor = useMemo(() => getUserColor(username), [username])
 
-    // ── Yjs — declare ydoc first, then derived maps
     const ydoc      = useMemo(() => new Y.Doc(), [])
     const yText     = useMemo(() => ydoc.getText("monaco"), [ydoc])
     const yLanguage = useMemo(() => ydoc.getMap("language"), [ydoc])
+    const yOutput   = useMemo(() => ydoc.getMap("output"), [ydoc])
 
     const tryCreateBinding = useCallback(() => {
         if (editorRef.current && providerRef.current && !bindingRef.current) {
@@ -170,6 +170,15 @@ function CollaboratorEditor({ roomId, username }) {
         updateUsers()
         provider.awareness.on("change", updateUsers)
 
+        // ── Stale awareness cleanup
+        const cleanupInterval = setInterval(() => {
+            provider.awareness.getStates().forEach((state, clientId) => {
+                if (clientId !== ydoc.clientID && !state.user) {
+                    provider.awareness.removeAwarenessStates([clientId], "timeout")
+                }
+            })
+        }, 5000)
+
         tryCreateBinding()
 
         // ── Language sync
@@ -181,7 +190,15 @@ function CollaboratorEditor({ roomId, username }) {
             }
         }
         yLanguage.observe(onLanguageChange)
-        onLanguageChange() // apply immediately on join
+        onLanguageChange()
+
+        // ── Output sync
+        const onOutputChange = () => {
+            const result = yOutput.get("result")
+            setOutput(result ?? null)
+        }
+        yOutput.observe(onOutputChange)
+        onOutputChange()
 
         // ── Cleanup on unmount / reload
         const handleBeforeUnload = () => {
@@ -191,15 +208,17 @@ function CollaboratorEditor({ roomId, username }) {
         window.addEventListener("beforeunload", handleBeforeUnload)
 
         return () => {
+            clearInterval(cleanupInterval)
             window.removeEventListener("beforeunload", handleBeforeUnload)
             yLanguage.unobserve(onLanguageChange)
+            yOutput.unobserve(onOutputChange)
             bindingRef.current?.destroy()
             bindingRef.current  = null
             provider.awareness.setLocalStateField("user", null)
             provider.disconnect()
             providerRef.current = null
         }
-    }, [roomId, username, userColor, ydoc, yLanguage, tryCreateBinding])
+    }, [roomId, username, userColor, ydoc, yLanguage, yOutput, tryCreateBinding])
 
     const handleEditorMount = (editor) => {
         editorRef.current = editor
@@ -214,7 +233,7 @@ function CollaboratorEditor({ roomId, username }) {
     const handleRun = async () => {
         if (!editorRef.current || isRunning) return
         setIsRunning(true)
-        setOutput("Running…")
+        yOutput.set("result", "Running…")
 
         try {
             const code = editorRef.current.getValue()
@@ -225,9 +244,9 @@ function CollaboratorEditor({ roomId, username }) {
             })
             const data = await res.json()
             const out  = data.stdout || data.stderr || data.compile_output || `Status: ${data.status}`
-            setOutput(out.trim() || "(no output)")
+            yOutput.set("result", out.trim() || "(no output)")
         } catch (err) {
-            setOutput(`Error: ${err.message}`)
+            yOutput.set("result", `Error: ${err.message}`)
         } finally {
             setIsRunning(false)
         }
@@ -344,7 +363,7 @@ function CollaboratorEditor({ roomId, username }) {
                                     Output
                                 </span>
                                 <button
-                                    onClick={() => setOutput(null)}
+                                    onClick={() => yOutput.set("result", null)}
                                     className="text-gray-600 hover:text-gray-400 text-xs transition-colors"
                                 >
                                     ✕ Close
